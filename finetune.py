@@ -42,9 +42,9 @@ def finetune(dataset, pretrained_file, fix_enc=True, **kwargs):
     config['valid_neg_sample_args']['distribution'] = 'popularity'
     config['test_neg_sample_args']['sample_num'] = 29
     config['test_neg_sample_args']['distribution'] = 'popularity'
-    config['train_neg_sample_args']['distribution'] = 'popularity'
-    config['train_neg_sample_args']['sample_num'] = 29
-    config['train_neg_sample_args']['alpha'] = 1
+    # config['train_neg_sample_args']['distribution'] = 'popularity'
+    # config['train_neg_sample_args']['sample_num'] = 29
+    # config['train_neg_sample_args']['alpha'] = 1
     config['eval_args']['mode']['valid'] = 'pop29'
     config['eval_args']['mode']['test'] = 'pop29'
     print("+" * 50)
