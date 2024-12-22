@@ -10,55 +10,105 @@ from data.dataset import UniSRecDataset
 
 
 def finetune(dataset, pretrained_file, fix_enc=True, **kwargs):
-    # configurations initialization
+    """
+    Fine-tunes the UniSRec model on the specified dataset with optional pre-trained weights.
+
+    Args:
+        dataset (str): Name of the dataset to use.
+        pretrained_file (str): Path to the pre-trained model file.
+        fix_enc (bool): Whether to fix the encoder parameters during fine-tuning.
+        **kwargs: Additional keyword arguments for configuration.
+
+    Returns:
+        tuple: Contains the model, dataset name, and a dictionary of results.
+    """
+    # Configuration files initialization
     props = ['props/UniSRec.yaml', 'props/finetune.yaml']
-    print(props)
+    print(f"Configuration files: {props}")
 
-    # configurations initialization
-    config = Config(model=UniSRec, dataset=dataset, config_file_list=props, config_dict=kwargs)
-    init_seed(config['seed'], config['reproducibility'])
-    # logger initialization
-    init_logger(config)
-    logger = getLogger()
-    logger.info(config)
-
-    # dataset filtering
-    dataset = UniSRecDataset(config)
-    logger.info(dataset)
-
-    # dataset splitting
-    train_data, valid_data, test_data = data_preparation(config, dataset)
-
-    # model loading and initialization
-    model = UniSRec(config, train_data.dataset).to(config['device'])
-
-    # Load pre-trained model
-    if pretrained_file != '':
-        checkpoint = torch.load(pretrained_file)
-        logger.info(f'Loading from {pretrained_file}')
-        logger.info(f'Transfer [{checkpoint["config"]["dataset"]}] -> [{dataset}]')
-        model.load_state_dict(checkpoint['state_dict'], strict=False)
-        if fix_enc:
-            logger.info(f'Fix encoder parameters.')
-            for _ in model.position_embedding.parameters():
-                _.requires_grad = False
-            for _ in model.trm_encoder.parameters():
-                _.requires_grad = False
-    logger.info(model)
-
-    # trainer loading and initialization
-    trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model)
-
-    # model training
-    best_valid_score, best_valid_result = trainer.fit(
-        train_data, valid_data, saved=True, show_progress=config['show_progress']
+    # Initialize configuration with additional keyword arguments
+    config = Config(
+        model=UniSRec,
+        dataset=dataset,
+        config_file_list=props,
+        config_dict=kwargs
     )
 
-    # model evaluation
-    test_result = trainer.evaluate(test_data, load_best_model=True, show_progress=config['show_progress'])
+    # Initialize random seed for reproducibility
+    init_seed(config['seed'], config['reproducibility'])
 
-    logger.info(set_color('best valid ', 'yellow') + f': {best_valid_result}')
-    logger.info(set_color('test result', 'yellow') + f': {test_result}')
+    print("+" * 50)
+    config['valid_neg_sample_args']['sample_num'] = 29
+    config['valid_neg_sample_args']['distribution'] = 'popularity'
+    config['test_neg_sample_args']['sample_num'] = 29
+    config['test_neg_sample_args']['distribution'] = 'popularity'
+    config['train_neg_sample_args']['distribution'] = 'popularity'
+    config['train_neg_sample_args']['sample_num'] = 29
+    config['train_neg_sample_args']['alpha'] = 1
+    config['eval_args']['mode']['valid'] = 'pop29'
+    config['eval_args']['mode']['test'] = 'pop29'
+    print("+" * 50)
+    init_logger(config)
+    logger = getLogger()
+    logger.info("Configuration:")
+    logger.info(config)
+
+    # Log the validation and test negative sampling arguments
+    logger.info(f"Validation Negative Sampling Args: {config['valid_neg_sample_args']}")
+    logger.info(f"Test Negative Sampling Args: {config['test_neg_sample_args']}")
+
+    # Dataset filtering and preparation
+    dataset = UniSRecDataset(config)
+    logger.info(f"Dataset Summary: {dataset}")
+
+    # Split the dataset into training, validation, and test sets
+    train_data, valid_data, test_data = data_preparation(config, dataset)
+    logger.info("Data Preparation Completed.")
+
+    # Initialize the model and move it to the specified device (CPU/GPU)
+    model = UniSRec(config, train_data.dataset).to(config['device'])
+    logger.info(f"Model Initialized: {model}")
+
+    # Load pre-trained model weights if provided
+    if pretrained_file:
+        checkpoint = torch.load(pretrained_file, map_location=config['device'])
+        logger.info(f'Loading pre-trained model from: {pretrained_file}')
+        logger.info(f'Transferring knowledge from dataset [{checkpoint["config"]["dataset"]}] to [{dataset}]')
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        
+        if fix_enc:
+            logger.info("Fixing encoder parameters.")
+            for param in model.position_embedding.parameters():
+                param.requires_grad = False
+            for param in model.trm_encoder.parameters():
+                param.requires_grad = False
+
+    # Initialize the trainer based on the model type
+    trainer = get_trainer(config['MODEL_TYPE'], config['model'])(config, model)
+    logger.info("Trainer Initialized.")
+
+    # Start the fine-tuning (training) process
+    logger.info("Starting Training Process...")
+    best_valid_score, best_valid_result = trainer.fit(
+        train_data,
+        valid_data,
+        saved=True,
+        show_progress=config['show_progress']
+    )
+    logger.info("Training Completed.")
+
+    # Evaluate the model on the test set using the best validation model
+    logger.info("Starting Evaluation on Test Set...")
+    test_result = trainer.evaluate(
+        test_data,
+        load_best_model=True,
+        show_progress=config['show_progress']
+    )
+    logger.info("Evaluation Completed.")
+
+    # Log the best validation and test results
+    logger.info(set_color('Best Validation Result:', 'yellow') + f' {best_valid_result}')
+    logger.info(set_color('Test Result:', 'yellow') + f' {test_result}')
 
     return config['model'], config['dataset'], {
         'best_valid_score': best_valid_score,
@@ -67,12 +117,39 @@ def finetune(dataset, pretrained_file, fix_enc=True, **kwargs):
         'test_result': test_result
     }
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-d', type=str, default='Scientific', help='dataset name')
-    parser.add_argument('-p', type=str, default='', help='pre-trained model path')
-    parser.add_argument('-f', type=bool, default=True)
-    args, unparsed = parser.parse_known_args()
-    print(args)
 
-    finetune(args.d, pretrained_file=args.p, fix_enc=args.f)
+if __name__ == '__main__':
+    """
+    Entry point for the fine-tuning script. Parses command-line arguments and initiates the fine-tuning process.
+    """
+    parser = argparse.ArgumentParser(description="Fine-tune the UniSRec model with specified configurations.")
+
+    # Command-line arguments
+    parser.add_argument(
+        '-d',
+        type=str,
+        default='Scientific',
+        help='Name of the dataset to use (default: Scientific)'
+    )
+    parser.add_argument(
+        '-p',
+        type=str,
+        default='',
+        help='Path to the pre-trained model file (default: empty string)'
+    )
+    parser.add_argument(
+        '-f',
+        type=bool,
+        default=True,
+        help='Whether to fix encoder parameters during fine-tuning (default: True)'
+    )
+    args, unparsed = parser.parse_known_args()
+    print(f"Parsed Arguments: {args}")
+
+    # Since we're using YAML configuration, no need to define negative sampling here
+    # Just call the finetune function with the parsed arguments
+    finetune(
+        dataset=args.d,
+        pretrained_file=args.p,
+        fix_enc=args.f
+    )

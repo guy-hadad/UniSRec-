@@ -84,6 +84,21 @@ class UniSRec(SASRec):
             config['adaptor_dropout_prob']
         )
 
+    def predict(self, interaction):
+      item_seq = interaction[self.ITEM_SEQ]
+      item_seq_len = interaction[self.ITEM_SEQ_LEN]
+      item_emb_list = self.moe_adaptor(self.plm_embedding(item_seq))
+      seq_output = self.forward(item_seq, item_emb_list, item_seq_len)
+      test_item = interaction[self.ITEM_ID]
+      test_item_emb = self.moe_adaptor(self.plm_embedding(test_item))
+      if self.train_stage == 'transductive_ft':
+          test_item_emb = test_item_emb + self.item_embedding(test_item)
+      seq_output = F.normalize(seq_output, dim=-1)
+      test_item_emb = F.normalize(test_item_emb, dim=-1)
+      scores = torch.mul(seq_output, test_item_emb).sum(dim=1)  # [B]
+      return scores
+
+
     def forward(self, item_seq, item_emb, item_seq_len):
         position_ids = torch.arange(item_seq.size(1), dtype=torch.long, device=item_seq.device)
         position_ids = position_ids.unsqueeze(0).expand_as(item_seq)
